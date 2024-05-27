@@ -1,16 +1,15 @@
-name: 'Setup Shopware'
-description: 'Install Shopware with specific versions in your CI'
-author: 'shopware AG'
+name: 'Setup HaoKe'
+description: 'Install HaoKe with specific versions in your CI'
 branding:
   color: 'blue'
   icon: 'download'
 inputs:
   env:
-    description: 'Environment for Shopware'
+    description: 'Environment for HaoKe'
     required: true
     default: 'test'
-  shopware-version:
-    description: 'Shopware Version to use'
+  haoke-version:
+    description: 'HaoKe Version to use'
     required: true
     default: 'v6.5.7.4'
   php-version:
@@ -22,7 +21,7 @@ inputs:
     required: true
     default: ''
   install:
-    description: 'Install Shopware'
+    description: 'Install HaoKe'
     required: true
     default: 'false'
   install-locale:
@@ -34,7 +33,7 @@ inputs:
     required: true
     default: 'EUR'
   keep-composer-tools:
-    description: 'Keep Shopware Composer tools (PHPStan, ECS, BC-Checker)'
+    description: 'Keep HaoKe Composer tools (PHPStan, ECS, BC-Checker)'
     required: true
     default: 'false'
   mysql-version:
@@ -44,11 +43,11 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Clone Shopware
+    - name: Clone HaoKe
       uses: actions/checkout@v4
       with:
-        repository: "shopware/shopware"
-        ref: ${{ inputs.shopware-version }}
+        repository: "haokeyingxiao/haoke"
+        ref: ${{ inputs.haoke-version }}
 
     - name: Remove vendor-bin
       if: inputs.keep-composer-tools == 'false'
@@ -107,27 +106,27 @@ runs:
           done
         fi
 
-    - name: Setup Shopware Environment Variables
+    - name: Setup HaoKe Environment Variables
       shell: bash
       run: |
         echo "APP_ENV=${{ inputs.env }}" >> "$GITHUB_ENV"
         echo "APP_SECRET=def00000bb5acb32b54ff8ee130270586eec0e878f7337dc7a837acc31d3ff00f93a56b595448b4b29664847dd51991b3314ff65aeeeb761a133b0ec0e070433bff08e48" >> "$GITHUB_ENV"
         echo "APP_URL=http://localhost:8000" >> "$GITHUB_ENV"
-        echo "DATABASE_URL=mysql://root@127.0.0.1/shopware" >> "$GITHUB_ENV"
+        echo "DATABASE_URL=mysql://root@127.0.0.1/haoke" >> "$GITHUB_ENV"
 
     - name: Retrieve the cached "vendor" directory (if present)
       uses: actions/cache@v3
       id: composer-cache
       with:
         path: vendor
-        key: ${{ runner.os }}-shopware-setup-composer-${{ inputs.shopware-version }}-${{ inputs.php-version }}
+        key: ${{ runner.os }}-haoke-setup-composer-${{ inputs.haoke-version }}-${{ inputs.php-version }}
     
     - name: Install dependencies
       if: steps.composer-cache.outputs.cache-hit != 'true'
       shell: bash
       run: composer install
 
-    - name: Install Shopware
+    - name: Install HaoKe
       if: inputs.install == 'true'
       shell: bash
       run: bin/console system:install --create-database --drop-database --basic-setup --force --shop-locale=${{ inputs.install-locale }} --shop-currency=${{ inputs.install-currency }}
