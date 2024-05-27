@@ -11,7 +11,7 @@ inputs:
   haoke-version:
     description: 'HaoKe Version to use'
     required: true
-    default: 'v6.5.7.4'
+    default: 'v6.6.2..'
   php-version:
     description: 'PHP Version to use'
     required: true
@@ -27,11 +27,11 @@ inputs:
   install-locale:
     description: 'Locale to install'
     required: true
-    default: 'en-GB'
+    default: 'zh-CN'
   install-currency:
     description: 'Currency to install'
     required: true
-    default: 'EUR'
+    default: 'CNY'
   keep-composer-tools:
     description: 'Keep HaoKe Composer tools (PHPStan, ECS, BC-Checker)'
     required: true
