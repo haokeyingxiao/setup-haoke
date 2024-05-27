@@ -15,8 +15,8 @@ jobs:
           - mysql:8.1
           - mariadb:11
     steps:
-      - name: Setup Shopware
-        uses: shopware/setup-shopware@main
+      - name: Setup HaoKe
+        uses: haokeyingxiao/setup-haoke@main
         with:
           mysql-version: ${{ matrix.mysql }}
           install: 'true'
