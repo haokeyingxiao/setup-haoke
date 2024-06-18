@@ -11,7 +11,7 @@ inputs:
   haoke-version:
     description: 'HaoKe Version to use'
     required: true
-    default: 'v6.6.2.0'
+    default: 'v6.6.4.3'
   php-version:
     description: 'PHP Version to use'
     required: true
