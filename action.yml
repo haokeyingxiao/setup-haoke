@@ -1,66 +1,104 @@
-name: 'Setup HaoKe'
-description: 'Install HaoKe with specific versions in your CI'
+name: "Setup Haoke"
+description: "Install Haoke with specific versions in your CI"
+author: "Haoke AG"
 branding:
-  color: 'blue'
-  icon: 'download'
+  color: "blue"
+  icon: "download"
 inputs:
   env:
-    description: 'Environment for HaoKe'
+    description: "Environment for Haoke"
     required: true
-    default: 'test'
+    default: "test"
   haoke-version:
-    description: 'HaoKe Version to use'
+    description: "Haoke Version to use"
     required: true
-    default: 'v6.6.4.3'
+    default: "v6.5.7.4"
+  haoke-repository:
+    description: The haoke repository to checkout
+    required: true
+    default: haokeyingxiao/haoke
   php-version:
-    description: 'PHP Version to use'
+    description: "PHP Version to use"
     required: true
-    default: '8.2'
+    default: "8.2"
   php-extensions:
-    description: 'PHP extensions to install'
+    description: "PHP extensions to install"
     required: true
-    default: ''
+    default: ""
+  composer-root-version:
+    description: "The COMPOSER_ROOT_VERSION that should be set"
+    required: false
+    default: ".auto"
   install:
-    description: 'Install HaoKe'
+    description: "Install Haoke"
     required: true
-    default: 'false'
+    default: "false"
   install-locale:
-    description: 'Locale to install'
+    description: "Locale to install"
     required: true
-    default: 'zh-CN'
+    default: "en-GB"
   install-currency:
-    description: 'Currency to install'
+    description: "Currency to install"
     required: true
-    default: 'CNY'
+    default: "EUR"
   keep-composer-tools:
-    description: 'Keep HaoKe Composer tools (PHPStan, ECS, BC-Checker)'
+    description: "Keep Haoke Composer tools (PHPStan, ECS, BC-Checker)"
     required: true
-    default: 'false'
+    default: "false"
   mysql-version:
-    description: 'MySQL Version to use'
+    description: "MySQL Version to use"
     required: true
-    default: 'builtin'
+    default: "builtin"
+  node-version:
+    description: nodejs version to use
+    required: false
+    default: "20.x"
+  install-admin:
+    description: Whether to install administration npm dependencies and prepare jest
+    required: false
+    default: ""
+  install-storefront:
+    description: Whether to install storefront npm dependencies
+    required: false
+    default: ""
+  path:
+    description: Relative path under $GITHUB_WORKSPACE to place the haoke repository
+    required: true
+    default: ""
+
 runs:
   using: "composite"
   steps:
-    - name: Clone HaoKe
+    - name: Clone Haoke
       uses: actions/checkout@v4
       with:
-        repository: "haokeyingxiao/haoke"
+        repository: ${{ inputs.haoke-repository }}
         ref: ${{ inputs.haoke-version }}
+        path: ${{ inputs.path }}
+
+    - name: Set COMPOSER_ROOT_VERSION
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        if [[ "${{ inputs.composer-root-version }}" == ".auto" ]]; then
+          echo "COMPOSER_ROOT_VERSION=$(jq -r '.extra | .["branch-alias"] | .["dev-trunk"]' composer.json)" >> "$GITHUB_ENV"
+        else
+          echo "COMPOSER_ROOT_VERSION=${{ inputs.composer-root-version }}" >> "$GITHUB_ENV"
+        fi
 
     - name: Remove vendor-bin
       if: inputs.keep-composer-tools == 'false'
       shell: bash
+      working-directory: ${{ inputs.path }}
       run: rm -rf vendor-bin
-        
+
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
       with:
         php-version: ${{ inputs.php-version }}
         extensions: ${{ inputs.php-extensions }}
         tools: symfony-cli
-    
+
     - name: Start Default MySQL
       if: inputs.mysql-version == 'builtin'
       shell: bash
@@ -84,6 +122,62 @@ runs:
           -d \
           ${{ inputs.mysql-version }}
 
+    - uses: "ramsey/composer-install@v3"
+      with:
+        custom-cache-key: ${{ runner.os }}-setup-shopware-composer-${{ inputs.php-version }}-${{ hashFiles('composer.json', 'custom/plugins/**/composer.json') }}
+        working-directory: ${{ inputs.path }}
+
+    - uses: actions/setup-node@v4
+      if: inputs.install-storefront || inputs.install-admin
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Retrieve the cached "node_modules" directory (if present)
+      uses: actions/cache@v4
+      if: inputs.install-storefront
+      id: storefront-node-cache
+      with:
+        path: ${{ inputs.path || '.' }}/src/Storefront/Resources/app/storefront/node_modules
+        key: storefront-node-modules-${{ runner.os }}-${{ hashFiles(format('{0}/src/Storefront/Resources/app/storefront/package-lock.json', inputs.path || '.')) }}
+
+    - name: Install dependencies (if the cached directory was not found)
+      if: inputs.install-storefront && steps.storefront-node-cache.outputs.cache-hit != 'true'
+      working-directory: ${{ inputs.path }}
+      env:
+        PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      shell: bash
+      run: npm --prefix src/Storefront/Resources/app/storefront ci --no-audit --prefer-offline
+
+    - name: Retrieve the cached "node_modules" directory (if present)
+      uses: actions/cache@v4
+      if: inputs.install-admin
+      id: admin-node-cache
+      with:
+        path: ${{ inputs.path || '.' }}/src/Administration/Resources/app/administration/node_modules
+        key: admin-node-modules-${{ runner.os }}-${{ hashFiles(format('{0}/src/Administration/Resources/app/administration/package-lock.json', inputs.path || '.')) }}
+
+    - name: Install dependencies (if the cached directory was not found)
+      if: inputs.install-admin && steps.admin-node-cache.outputs.cache-hit != 'true'
+      env:
+        PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: npm --prefix src/Administration/Resources/app/administration ci --no-audit --prefer-offline
+
+    - name: Prepare Jest environment
+      if: ${{ inputs.install-admin }}
+      shell: bash
+      working-directory: ${{ inputs.path || '.' }}/src/Administration/Resources/app/administration
+      run: npm run unit-setup
+
+    - name: Entity schema
+      if: ${{ inputs.install-admin }}
+      shell: bash
+      working-directory: ${{ inputs.path || '.' }}
+      run: |
+        composer run framework:schema:dump
+        composer run npm:admin run convert-entity-schema
+
     - name: Configure MySQL Client
       if: inputs.mysql-version != 'builtin'
       shell: bash
@@ -106,32 +200,63 @@ runs:
           done
         fi
 
-    - name: Setup HaoKe Environment Variables
+    - name: Setup Haoke Environment Variables
       shell: bash
+      working-directory: ${{ inputs.path }}
       run: |
         echo "APP_ENV=${{ inputs.env }}" >> "$GITHUB_ENV"
         echo "APP_SECRET=def00000bb5acb32b54ff8ee130270586eec0e878f7337dc7a837acc31d3ff00f93a56b595448b4b29664847dd51991b3314ff65aeeeb761a133b0ec0e070433bff08e48" >> "$GITHUB_ENV"
         echo "APP_URL=http://localhost:8000" >> "$GITHUB_ENV"
-        echo "DATABASE_URL=mysql://root@127.0.0.1/haoke" >> "$GITHUB_ENV"
 
-    - name: Retrieve the cached "vendor" directory (if present)
-      uses: actions/cache@v3
-      id: composer-cache
-      with:
-        path: vendor
-        key: ${{ runner.os }}-haoke-setup-composer-${{ inputs.haoke-version }}-${{ inputs.php-version }}
-    
-    - name: Install dependencies
-      if: steps.composer-cache.outputs.cache-hit != 'true'
+    - name: Setup Haoke Database URL
       shell: bash
-      run: composer install
+      working-directory: ${{ inputs.path }}
+      run: |
+        echo "DATABASE_URL=mysql://root@127.0.0.1/shopware" >> "$GITHUB_ENV"
+      if: ${{ env.DATABASE_URL == '' }} # Don't override if already set
 
-    - name: Install HaoKe
+    - name: Configure HMAC JWT
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        yq -n '.shopware.api.jwt_key.use_app_secret = true' | tee config/packages/zz-shopware.yaml
+      if: ${{ hashFiles(format('{0}/src/Core/Framework/Api/OAuth/JWTConfigurationFactory.php', (inputs.path || '.' ))) != '' }}
+
+    - name: Install Haoke
       if: inputs.install == 'true'
       shell: bash
-      run: bin/console system:install --create-database --drop-database --basic-setup --force --shop-locale=${{ inputs.install-locale }} --shop-currency=${{ inputs.install-currency }}
+      working-directory: ${{ inputs.path }}
+      run: |
+        composer run init:db -- --shop-locale=${{ inputs.install-locale }} --shop-currency=${{ inputs.install-currency }}
+
+    - name: Build JS Admin
+      if: inputs.install-admin == 'true'
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        composer run build:js:admin
+        bin/console assets:install
+
+    - name: Build JS Storefront
+      if: inputs.install-storefront == 'true'
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        composer run build:js:storefront
+
+    - name: Assign default Storefront theme to all sales channels
+      if: inputs.install-storefront == 'true'
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: | 
+        if bin/console theme:change --help | grep -q '--sync'; then
+          bin/console theme:change --sync --all Storefront
+        else
+          bin/console theme:change --all Storefront
+        fi
 
     - name: Start Webserver
-      if: inputs.install == 'true' && inputs.env == 'e2e'
+      if: inputs.install == 'true'
       shell: bash
-      run: symfony server:start -d
+      working-directory: ${{ inputs.path }}
+      run: symfony server:start -d --no-tls --allow-http --port=8000
