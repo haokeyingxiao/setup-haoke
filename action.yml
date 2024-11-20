@@ -12,7 +12,7 @@ inputs:
   haoke-version:
     description: "Haoke Version to use"
     required: true
-    default: "v6.5.7.4"
+    default: "v6.6.5.0"
   haoke-repository:
     description: The haoke repository to checkout
     required: true
