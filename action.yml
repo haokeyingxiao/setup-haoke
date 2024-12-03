@@ -53,6 +53,10 @@ inputs:
     description: nodejs version to use
     required: false
     default: "20.x"
+  npm-version:
+    description: npm version to use
+    required: false
+    default: ""
   install-admin:
     description: Whether to install administration npm dependencies and prepare jest
     required: false
@@ -92,6 +96,20 @@ runs:
       working-directory: ${{ inputs.path }}
       run: rm -rf vendor-bin
 
+    - name: Fix temporary PHPStan Failure
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        if ! jq -e '.["require-dev"]["phpstan/phpdoc-parser"]' composer.json > /dev/null 2>&1; then
+            echo "phpstan/phpdoc-parser not found in require-dev, adding it..."
+
+            # Create a temporary file with the new content
+            jq '.["require-dev"]["phpstan/phpdoc-parser"] = "~1"' composer.json > composer.json.tmp
+
+            # Replace the original file
+            mv composer.json.tmp composer.json
+        fi
+
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
       with:
@@ -124,13 +142,19 @@ runs:
 
     - uses: "ramsey/composer-install@v3"
       with:
-        custom-cache-key: ${{ runner.os }}-setup-shopware-composer-${{ inputs.php-version }}-${{ hashFiles('composer.json', 'custom/plugins/**/composer.json') }}
+        custom-cache-key: ${{ runner.os }}-setup-haoke-composer-${{ inputs.php-version }}-${{ hashFiles('composer.json', 'custom/plugins/**/composer.json') }}
         working-directory: ${{ inputs.path }}
 
     - uses: actions/setup-node@v4
       if: inputs.install-storefront || inputs.install-admin
       with:
         node-version: ${{ inputs.node-version }}
+
+    - name: Install npm version
+      if: inputs.npm-version
+      shell: bash
+      run: |
+        npm install -g npm@${{ inputs.npm-version }}
 
     - name: Retrieve the cached "node_modules" directory (if present)
       uses: actions/cache@v4
@@ -168,7 +192,7 @@ runs:
       if: ${{ inputs.install-admin }}
       shell: bash
       working-directory: ${{ inputs.path || '.' }}/src/Administration/Resources/app/administration
-      run: npm run unit-setup
+      run: npm run unit-setup --if-present
 
     - name: Entity schema
       if: ${{ inputs.install-admin }}
@@ -178,13 +202,41 @@ runs:
         composer run framework:schema:dump
         composer run npm:admin run convert-entity-schema
 
+    - name: Setup Haoke Database URL
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        echo "DATABASE_URL=mysql://root@127.0.0.1/shopware" >> "$GITHUB_ENV"
+      if: ${{ env.DATABASE_URL == '' }} # Don't override if already set
+
     - name: Configure MySQL Client
       if: inputs.mysql-version != 'builtin'
-      shell: bash
-      run: |
-        echo "[client]" > $HOME/.my.cnf
-        echo "host=127.0.0.1" > $HOME/.my.cnf
-        echo "user=root" > $HOME/.my.cnf
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const os = require('os');
+
+          const uri = process.env.DATABASE_URL;
+          const regex = /^mysql:\/\/(?<user>[^:]+)(:(?<password>[^@]+))?@(?<host>[^:\/]+)(:(?<port>\d+))?(\/(?<database>[^\?]+))?/;
+          const match = uri.match(regex);
+
+          if (!match || !match.groups) {
+              console.error("DATABASE_URL is invalid!");
+              process.exit(1);
+          }
+
+          const { user, password, host, port, database } = match.groups;
+          const myFileContent = [
+            "[client]",
+            `host=${host}`,
+            `user=${user}`,
+            password ? `password=${password}` : null,
+            port ? `port=${port}` : null,
+            database ? `database=${database}` : null,
+          ].filter(Boolean).join("\n");
+
+          fs.writeFileSync(`${os.homedir()}/.my.cnf`, myFileContent);
 
     - name: Wait for MySQL
       if: inputs.mysql-version != 'builtin' && inputs.mysql-version != 'skip'
@@ -207,13 +259,6 @@ runs:
         echo "APP_ENV=${{ inputs.env }}" >> "$GITHUB_ENV"
         echo "APP_SECRET=def00000bb5acb32b54ff8ee130270586eec0e878f7337dc7a837acc31d3ff00f93a56b595448b4b29664847dd51991b3314ff65aeeeb761a133b0ec0e070433bff08e48" >> "$GITHUB_ENV"
         echo "APP_URL=http://localhost:8000" >> "$GITHUB_ENV"
-
-    - name: Setup Haoke Database URL
-      shell: bash
-      working-directory: ${{ inputs.path }}
-      run: |
-        echo "DATABASE_URL=mysql://root@127.0.0.1/shopware" >> "$GITHUB_ENV"
-      if: ${{ env.DATABASE_URL == '' }} # Don't override if already set
 
     - name: Configure HMAC JWT
       shell: bash
@@ -248,7 +293,7 @@ runs:
       if: inputs.install-storefront == 'true'
       shell: bash
       working-directory: ${{ inputs.path }}
-      run: | 
+      run: |
         if bin/console theme:change --help | grep -q '--sync'; then
           bin/console theme:change --sync --all Storefront
         else
@@ -259,4 +304,10 @@ runs:
       if: inputs.install == 'true'
       shell: bash
       working-directory: ${{ inputs.path }}
-      run: symfony server:start -d --no-tls --allow-http --port=8000
+      env:
+        SYMFONY_DAEMON: "1"
+        SYMFONY_NO_TLS: "1"
+        SYMFONY_ALLOW_HTTP: "1"
+        SYMFONY_PORT: "8000"
+        SYMFONY_ALLOW_ALL_IP: "1"
+      run: symfony server:start
